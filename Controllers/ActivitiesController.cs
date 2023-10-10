@@ -1,6 +1,9 @@
 using Microsoft.AspNetCore.Mvc;
-using ToDoAPI.Models;
 using Microsoft.Extensions.Logging;
+using Microsoft.AspNetCore.Authorization;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using ToDoAPI.Models;
 
 namespace ToDoAPI.Controllers
 {
@@ -16,37 +19,72 @@ namespace ToDoAPI.Controllers
         }
 
         [HttpGet]
+        [Authorize(Roles = "user")]
         public IActionResult Get()
         {
-            var db = new ToDoDbContext();
+            ToDoDbContext db = new();
 
-            var activity = from a in db.Activities select a;
-            if (!activity.Any()) return NoContent();
+            string IdUser;
+            try {
+                IdUser = getUserId();
+            }
+            catch (Exception)
+            {
+                return StatusCode(403, new { detail = "Can't get user id from Token."});
+            }
 
-            return Ok(activity);
+            IQueryable<Activities> activities = from act in db.Activities
+                                              where act.IdUser.Equals(IdUser)
+                                              select act;
+            if (!activities.Any()) return NoContent();
+
+            return Ok(activities);
         }
 
         [Route("{id}")]
         [HttpGet]
+        [Authorize(Roles = "user")]
         public IActionResult Get(uint id)
         {
-            var db = new ToDoDbContext();
+            ToDoDbContext db = new();
+            string IdUser;
+            try
+            {
+                IdUser = getUserId();
+            }
+            catch (Exception)
+            {
+                return StatusCode(403, new { detail = "Can't get user id from Token." }); //forbid
+            }
 
-            var activity = db.Activities.Find(id);
+            IQueryable<Activities> activities = from act in db.Activities
+                                              where act.IdActivity == id && act.IdUser.Equals(IdUser)
+                                              select act;
+            Activities? activity = activities.FirstOrDefault();
             if (activity == null) return NoContent();
 
             return Ok(activity);
         }
 
         [HttpPost]
+        [Authorize(Roles = "user")]
         public IActionResult Post([FromBody] DTOs.Activity data)
         {
-            var db = new ToDoDbContext();
+            ToDoDbContext db = new();
+            string IdUser;
+            try
+            {
+                IdUser = getUserId();
+            }
+            catch (Exception)
+            {
+                return StatusCode(403, new { detail = "Can't get user id from Token." }); //forbid
+            }
 
-            var activity = new Models.Activities();
+            Activities activity = new Models.Activities();
             activity.Name = data.Name;
             activity.When = data.When;
-            activity.IdUser = data.IdUser;
+            activity.IdUser = IdUser;
 
             db.Activities.Add(activity);
             db.SaveChanges();
@@ -56,12 +94,22 @@ namespace ToDoAPI.Controllers
 
         [Route("{id}")]
         [HttpPut]
+        [Authorize(Roles = "user")]
         public IActionResult Put(uint id, [FromBody] DTOs.Activity data)
         {
             ToDoDbContext db = new();
+            string IdUser;
+            try
+            {
+                IdUser = getUserId();
+            }
+            catch (Exception)
+            {
+                return StatusCode(403, new { detail = "Can't get user id from Token." }); //forbid
+            }
 
             IQueryable<Activities> activities = from act in db.Activities
-                                                where act.IdActivity == id
+                                                where act.IdActivity == id && act.IdUser.Equals(IdUser)
                                                 select act;
             Activities? activity = activities.FirstOrDefault();
             if (activity == null) return NotFound(new { detail = "can't find the activity" });
@@ -77,12 +125,22 @@ namespace ToDoAPI.Controllers
 
         [Route("{id}")]
         [HttpDelete]
+        [Authorize(Roles = "user")]
         public IActionResult Delete(uint id)
         {
             ToDoDbContext db = new();
+            string IdUser;
+            try
+            {
+                IdUser = getUserId();
+            }
+            catch (Exception)
+            {
+                return StatusCode(403, new { detail = "Can't get user id from Token." }); //forbid
+            }
 
             IQueryable<Activities> activities = from act in db.Activities
-                                               where act.IdActivity == id
+                                               where act.IdActivity == id && act.IdUser.Equals(IdUser)
                                                select act;
             Activities? activity = activities.FirstOrDefault();
             if (activity == null) return NotFound(new { detail = "can't find the activity" });
@@ -92,6 +150,15 @@ namespace ToDoAPI.Controllers
 
             string detailInfo = String.Format("Activity id: {0} is deleted.", id);
             return Ok(new { detail = detailInfo });
+        }
+
+        private string getUserId()
+        {
+            // Get the Authorization header from the HTTP request
+            if (HttpContext.User.Identity is not ClaimsIdentity identity) throw new Exception("Claims identity not found");
+
+            Claim? claim = identity.FindFirst(ClaimTypes.Name) ?? throw new Exception("The identity has no claim");
+            return claim.Value;
         }
     }
 
